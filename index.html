@@ -92,6 +92,59 @@
         } catch {}
       })();
     </script>
+    <script>
+      (() => {
+        if (window.__CFSM_VISIBILITY_BRIDGE__) return;
+        window.__CFSM_VISIBILITY_BRIDGE__ = true;
+
+        const nativeSend = WebSocket.prototype.send;
+        const trackedSockets = new Set();
+
+        const trackSocket = (socket) => {
+          if (trackedSockets.has(socket)) return;
+          trackedSockets.add(socket);
+          socket.addEventListener(
+            "close",
+            () => trackedSockets.delete(socket),
+            { once: true },
+          );
+        };
+
+        WebSocket.prototype.send = function (data) {
+          try {
+            if (typeof data === "string" && this.url.includes("/api/ws")) {
+              const message = JSON.parse(data);
+              if (message && message.type === "subscribe") {
+                trackSocket(this);
+                message.visible = !document.hidden;
+                data = JSON.stringify(message);
+              }
+            }
+          } catch {}
+          return nativeSend.call(this, data);
+        };
+
+        const reportVisibility = () => {
+          const payload = JSON.stringify({
+            type: "visibility",
+            visible: !document.hidden,
+          });
+          for (const socket of [...trackedSockets]) {
+            if (socket.readyState === WebSocket.OPEN) {
+              try {
+                nativeSend.call(socket, payload);
+              } catch {}
+            } else if (socket.readyState === WebSocket.CLOSED) {
+              trackedSockets.delete(socket);
+            }
+          }
+        };
+
+        document.addEventListener("visibilitychange", reportVisibility, {
+          passive: true,
+        });
+      })();
+    </script>
     <script type="module" crossorigin src="./assets/index-D3CXpQAE.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/rolldown-runtime-Cyuzqnbw.js">
     <link rel="modulepreload" crossorigin href="./assets/charts-lRTmaCY8.js">
@@ -101,7 +154,7 @@
     <link rel="modulepreload" crossorigin href="./assets/createLucideIcon-uSvo9KLi.js">
     <link rel="stylesheet" crossorigin href="./assets/charts-CnsZ1jie.css">
     <link rel="stylesheet" crossorigin href="./assets/index-BliOk_DU.css">
-    <meta name="theme-version" content="LuminaPlus v1.2.6" />
+    <meta name="theme-version" content="LuminaPlus v1.2.6+do-hibernate" />
   </head>
   <body>
     <div id="root" class="relative z-30"></div>
