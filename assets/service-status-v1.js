@@ -14,7 +14,8 @@ if (root) {
   let activeServerId = ''
   let refreshTimer = null
   let lastRenderKey = ''
-  let placementFrame = 0
+  let placementTimer = 0
+  let isPlacedInInstanceFlow = false
 
   const getApiBase = () => {
     const raw = document.querySelector('meta[name="apiBase"]')?.content?.trim() || ''
@@ -144,7 +145,7 @@ if (root) {
         </div>
       </section>
     `
-    root.hidden = false
+    root.hidden = !isPlacedInInstanceFlow
   }
 
   const fetchStatuses = async () => {
@@ -176,6 +177,8 @@ if (root) {
   }
 
   const restoreRootToBody = () => {
+    isPlacedInInstanceFlow = false
+    root.hidden = true
     if (!document.body || root.parentElement === document.body) return
     const appRoot = document.getElementById('root')
     if (appRoot?.parentElement === document.body) {
@@ -186,20 +189,32 @@ if (root) {
   }
 
   const placeRootInInstanceFlow = (attempt = 0) => {
-    if (placementFrame) cancelAnimationFrame(placementFrame)
-    placementFrame = requestAnimationFrame(() => {
-      placementFrame = 0
-      if (!getServerId()) return
+    if (placementTimer) {
+      clearTimeout(placementTimer)
+      placementTimer = 0
+    }
+    if (!getServerId()) return
 
-      const backLink = document.querySelector('.instance-page-back')
-      const instanceFlow = backLink?.parentElement
-      if (instanceFlow) {
-        if (root.parentElement !== instanceFlow) instanceFlow.appendChild(root)
-        return
-      }
+    const backLink = document.querySelector('.instance-page-back')
+    const instanceFlow = backLink?.parentElement
+    if (instanceFlow) {
+      if (root.parentElement !== instanceFlow) instanceFlow.appendChild(root)
+      isPlacedInInstanceFlow = true
+      root.hidden = !root.innerHTML
+      return
+    }
 
-      if (attempt < 60) placeRootInInstanceFlow(attempt + 1)
-    })
+    // The instance page is lazy-loaded. Retry for up to one minute, but do
+    // not observe/mutate the React tree continuously. Until placement
+    // succeeds the body-level fallback root must remain hidden.
+    isPlacedInInstanceFlow = false
+    root.hidden = true
+    if (attempt < 240) {
+      placementTimer = window.setTimeout(() => {
+        placementTimer = 0
+        placeRootInInstanceFlow(attempt + 1)
+      }, 250)
+    }
   }
 
   const syncRoute = () => {
@@ -245,6 +260,6 @@ if (root) {
 
   window.addEventListener('beforeunload', () => {
     if (refreshTimer) window.clearInterval(refreshTimer)
-    if (placementFrame) cancelAnimationFrame(placementFrame)
+    if (placementTimer) window.clearTimeout(placementTimer)
   }, { once: true })
 }
