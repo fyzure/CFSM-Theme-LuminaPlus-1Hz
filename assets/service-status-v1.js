@@ -14,6 +14,7 @@ if (root) {
   let activeServerId = ''
   let refreshTimer = null
   let lastRenderKey = ''
+  let placementFrame = 0
 
   const getApiBase = () => {
     const raw = document.querySelector('meta[name="apiBase"]')?.content?.trim() || ''
@@ -174,9 +175,44 @@ if (root) {
     }
   }
 
+  const restoreRootToBody = () => {
+    if (!document.body || root.parentElement === document.body) return
+    const appRoot = document.getElementById('root')
+    if (appRoot?.parentElement === document.body) {
+      appRoot.insertAdjacentElement('afterend', root)
+    } else {
+      document.body.appendChild(root)
+    }
+  }
+
+  const placeRootInInstanceFlow = (attempt = 0) => {
+    if (placementFrame) cancelAnimationFrame(placementFrame)
+    placementFrame = requestAnimationFrame(() => {
+      placementFrame = 0
+      if (!getServerId()) return
+
+      const backLink = document.querySelector('.instance-page-back')
+      const instanceFlow = backLink?.parentElement
+      if (instanceFlow) {
+        if (root.parentElement !== instanceFlow) instanceFlow.appendChild(root)
+        return
+      }
+
+      if (attempt < 60) placeRootInInstanceFlow(attempt + 1)
+    })
+  }
+
   const syncRoute = () => {
     const serverId = getServerId()
-    if (serverId === activeServerId && serverId) return
+    if (!serverId) {
+      activeServerId = ''
+      lastRenderKey = ''
+      render([])
+      restoreRootToBody()
+      return
+    }
+    placeRootInInstanceFlow()
+    if (serverId === activeServerId) return
     activeServerId = serverId
     lastRenderKey = ''
     render([])
@@ -209,5 +245,6 @@ if (root) {
 
   window.addEventListener('beforeunload', () => {
     if (refreshTimer) window.clearInterval(refreshTimer)
+    if (placementFrame) cancelAnimationFrame(placementFrame)
   }, { once: true })
 }
