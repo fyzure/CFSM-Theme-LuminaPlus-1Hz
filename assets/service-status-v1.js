@@ -27,7 +27,10 @@ if (root) {
   }
 
   const getServerId = () => {
-    const match = window.location.pathname.match(/^\/server\/([^/?#]+)/i)
+    const route = window.location.hash.startsWith('#/')
+      ? window.location.hash.slice(1)
+      : window.location.pathname
+    const match = route.match(/^\/server\/([^/?#]+)/i)
     if (!match) return ''
     try {
       return decodeURIComponent(match[1])
@@ -192,6 +195,7 @@ if (root) {
 
   patchHistory('pushState')
   patchHistory('replaceState')
+  window.addEventListener('hashchange', syncRoute)
   window.addEventListener('popstate', syncRoute)
   window.addEventListener('cfsm-routechange', syncRoute)
   document.addEventListener('visibilitychange', () => {
