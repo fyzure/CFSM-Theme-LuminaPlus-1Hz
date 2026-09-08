@@ -28,7 +28,7 @@
 }
 
 .cfsm-service-status-header,
-.cfsm-service-status-row {
+.cfsm-service-status-row-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -75,6 +75,10 @@
   border-top: 1px solid var(--hairline);
 }
 
+.cfsm-service-status-row-top {
+  width: 100%;
+}
+
 .cfsm-service-status-row:first-child {
   border-top: 0;
 }
@@ -109,6 +113,7 @@
 }
 
 .cfsm-service-status-dot[data-state='operational'],
+.cfsm-service-status-history-dot[data-state='operational'],
 .cfsm-service-status-overall[data-state='operational'] .cfsm-service-status-dot { background: #2ea043; }
 .cfsm-service-status-state[data-state='operational'],
 .cfsm-service-status-overall[data-state='operational'] { color: #2ea043; }
@@ -116,6 +121,9 @@
 .cfsm-service-status-dot[data-state='degraded'],
 .cfsm-service-status-dot[data-state='maintenance'],
 .cfsm-service-status-dot[data-state='auth_required'],
+.cfsm-service-status-history-dot[data-state='degraded'],
+.cfsm-service-status-history-dot[data-state='maintenance'],
+.cfsm-service-status-history-dot[data-state='auth_required'],
 .cfsm-service-status-overall[data-state='degraded'] .cfsm-service-status-dot { background: #d29922; }
 .cfsm-service-status-state[data-state='degraded'],
 .cfsm-service-status-state[data-state='maintenance'],
@@ -125,15 +133,63 @@
 .cfsm-service-status-dot[data-state='unavailable'],
 .cfsm-service-status-dot[data-state='error'],
 .cfsm-service-status-dot[data-state='stale'],
+.cfsm-service-status-history-dot[data-state='unavailable'],
+.cfsm-service-status-history-dot[data-state='error'],
+.cfsm-service-status-history-dot[data-state='stale'],
 .cfsm-service-status-overall[data-state='unavailable'] .cfsm-service-status-dot { background: #f85149; }
 .cfsm-service-status-state[data-state='unavailable'],
 .cfsm-service-status-state[data-state='error'],
 .cfsm-service-status-state[data-state='stale'],
 .cfsm-service-status-overall[data-state='unavailable'] { color: #f85149; }
 
+.cfsm-service-status-history-wrap {
+  margin-top: 12px;
+}
+
+.cfsm-service-status-history {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 13px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cfsm-service-status-history::-webkit-scrollbar {
+  display: none;
+}
+
+.cfsm-service-status-history-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 999px;
+  background: var(--fill-secondary, #8b949e);
+  opacity: .92;
+}
+
+.cfsm-service-status-history-dot[data-state='missing'] {
+  background: var(--fill-secondary, #a1a1aa);
+  opacity: .28;
+}
+
+.cfsm-service-status-history-dot:hover {
+  transform: scale(1.45);
+}
+
+.cfsm-service-status-history-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 5px;
+  color: var(--text-tertiary, #71717a);
+  font-size: 10px;
+  line-height: 1;
+}
+
 @media (max-width: 640px) {
   .cfsm-service-status-header,
-  .cfsm-service-status-row {
+  .cfsm-service-status-row-top {
     align-items: flex-start;
     flex-direction: column;
   }

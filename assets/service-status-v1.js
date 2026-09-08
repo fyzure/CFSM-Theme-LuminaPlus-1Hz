@@ -1,6 +1,8 @@
 const root = document.getElementById('cfsm-service-status-root')
 
 if (root) {
+  const HISTORY_SLOT_MS = 15 * 60 * 1000
+  const HISTORY_SLOT_COUNT = 96
   const stateLabels = {
     operational: '运行正常',
     degraded: '性能下降',
@@ -9,6 +11,15 @@ if (root) {
     auth_required: '需要登录',
     error: '检查异常',
     stale: '状态过期'
+  }
+  const stateSeverity = {
+    operational: 0,
+    maintenance: 1,
+    degraded: 2,
+    auth_required: 3,
+    unavailable: 4,
+    error: 5,
+    stale: 5
   }
 
   let activeServerId = ''
@@ -62,11 +73,67 @@ if (root) {
     return `${Math.floor(seconds / 3600)} 小时前`
   }
 
+  const buildHistorySlots = (samples, latestCheckedAt, latestReportedState) => {
+    const observed = Array.isArray(samples) ? [...samples] : []
+    if (
+      Number.isFinite(latestCheckedAt) && latestCheckedAt > 0 &&
+      !observed.some(sample => Math.abs(sample.checkedAt - latestCheckedAt) < 1000)
+    ) {
+      observed.push({ state: latestReportedState, checkedAt: latestCheckedAt })
+    }
+
+    const currentBucket = Math.floor(Date.now() / HISTORY_SLOT_MS)
+    const firstBucket = currentBucket - HISTORY_SLOT_COUNT + 1
+    const byBucket = new Map()
+    for (const sample of observed) {
+      const bucket = Math.floor(sample.checkedAt / HISTORY_SLOT_MS)
+      if (bucket < firstBucket || bucket > currentBucket) continue
+      const previous = byBucket.get(bucket)
+      if (!previous || (stateSeverity[sample.state] ?? 5) >= (stateSeverity[previous.state] ?? 5)) {
+        byBucket.set(bucket, sample)
+      }
+    }
+
+    return Array.from({ length: HISTORY_SLOT_COUNT }, (_, index) => {
+      const bucket = firstBucket + index
+      const sample = byBucket.get(bucket) || null
+      return {
+        bucketAt: bucket * HISTORY_SLOT_MS,
+        observedAt: sample?.checkedAt || 0,
+        state: sample?.state || 'missing',
+        missing: !sample
+      }
+    })
+  }
+
   const normalizeRow = (item) => {
     const checkedAt = Number(item?.checked_at)
     const checkedAtMs = checkedAt < 1e10 ? checkedAt * 1000 : checkedAt
     const stale = !Number.isFinite(checkedAtMs) || Date.now() - checkedAtMs > 45 * 60 * 1000
-    const state = stale ? 'stale' : String(item?.state || 'error').toLowerCase()
+    const reportedState = stateLabels[String(item?.state || '').toLowerCase()]
+      ? String(item.state).toLowerCase()
+      : 'error'
+    const state = stale ? 'stale' : reportedState
+    const history = Array.isArray(item?.history)
+      ? item.history
+        .map(sample => {
+          const rawTs = Number(sample?.checked_at)
+          const sampleTs = rawTs < 1e10 ? rawTs * 1000 : rawTs
+          const sampleState = String(sample?.state || 'error').toLowerCase()
+          if (!Number.isFinite(sampleTs) || sampleTs <= 0) return null
+          return {
+            state: stateLabels[sampleState] ? sampleState : 'error',
+            checkedAt: sampleTs
+          }
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.checkedAt - b.checkedAt)
+      : []
+    const historySlots = buildHistorySlots(
+      history,
+      Number.isFinite(checkedAtMs) ? checkedAtMs : 0,
+      reportedState
+    )
     return {
       id: String(item?.id || ''),
       service: String(item?.service || ''),
@@ -75,7 +142,9 @@ if (root) {
       stateLabel: stateLabels[state] || stateLabels.error,
       message: String(item?.message || ''),
       checkedAt: Number.isFinite(checkedAtMs) ? checkedAtMs : 0,
-      ageText: formatAge(checkedAtMs)
+      ageText: formatAge(checkedAtMs),
+      history,
+      historySlots
     }
   }
 
@@ -100,7 +169,8 @@ if (root) {
       item.state,
       item.message,
       item.checkedAt,
-      item.ageText
+      item.ageText,
+      item.historySlots.map(slot => [slot.state, slot.observedAt])
     ]))
     if (key === lastRenderKey) return
     lastRenderKey = key
@@ -129,16 +199,36 @@ if (root) {
         <div class="cfsm-service-status-list">
           ${rows.map(item => `
             <article class="cfsm-service-status-row">
-              <div class="cfsm-service-status-main">
-                <span class="cfsm-service-status-dot" data-state="${item.state}"></span>
-                <div class="cfsm-service-status-copy">
-                  <div class="cfsm-service-status-name">${escapeHtml(item.label)}</div>
-                  ${item.message ? `<div class="cfsm-service-status-message">${escapeHtml(item.message)}</div>` : ''}
+              <div class="cfsm-service-status-row-top">
+                <div class="cfsm-service-status-main">
+                  <span class="cfsm-service-status-dot" data-state="${item.state}"></span>
+                  <div class="cfsm-service-status-copy">
+                    <div class="cfsm-service-status-name">${escapeHtml(item.label)}</div>
+                    ${item.message ? `<div class="cfsm-service-status-message">${escapeHtml(item.message)}</div>` : ''}
+                  </div>
+                </div>
+                <div class="cfsm-service-status-meta">
+                  <span class="cfsm-service-status-state" data-state="${item.state}">${item.stateLabel}</span>
+                  <span class="cfsm-service-status-age" title="${item.checkedAt ? new Date(item.checkedAt).toLocaleString() : ''}">${item.ageText}</span>
                 </div>
               </div>
-              <div class="cfsm-service-status-meta">
-                <span class="cfsm-service-status-state" data-state="${item.state}">${item.stateLabel}</span>
-                <span class="cfsm-service-status-age" title="${item.checkedAt ? new Date(item.checkedAt).toLocaleString() : ''}">${item.ageText}</span>
+              <div class="cfsm-service-status-history-wrap">
+                <div class="cfsm-service-status-history" aria-label="${escapeHtml(item.label)} 最近 24 小时检查历史，每 15 分钟一个点">
+                  ${item.historySlots.map(slot => `
+                    <span
+                      class="cfsm-service-status-history-dot"
+                      data-state="${slot.state}"
+                      title="${slot.missing
+                        ? `${escapeHtml(new Date(slot.bucketAt).toLocaleString())} · 无采样`
+                        : `${escapeHtml(new Date(slot.observedAt).toLocaleString())} · ${stateLabels[slot.state] || stateLabels.error}`}"
+                    ></span>
+                  `).join('')}
+                </div>
+                <div class="cfsm-service-status-history-axis" aria-hidden="true">
+                  <span>24 小时前</span>
+                  <span>每 15 分钟</span>
+                  <span>现在</span>
+                </div>
               </div>
             </article>
           `).join('')}
