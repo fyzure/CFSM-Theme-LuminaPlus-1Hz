@@ -3,6 +3,9 @@ const root = document.getElementById('cfsm-service-status-root')
 if (root) {
   const HISTORY_SLOT_MS = 15 * 60 * 1000
   const HISTORY_SLOT_COUNT = 96
+  const STATUS_REFRESH_GRACE_MS = 20 * 1000
+  const STATUS_RETRY_MS = 5 * 60 * 1000
+  const FULL_HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000
   const stateLabels = {
     operational: '运行正常',
     degraded: '性能下降',
@@ -23,10 +26,15 @@ if (root) {
   }
 
   let activeServerId = ''
-  let refreshTimer = null
+  let refreshTimer = 0
   let lastRenderKey = ''
   let placementTimer = 0
   let isPlacedInInstanceFlow = false
+  let hasFullHistory = false
+  let lastFullHistoryLoadAt = 0
+  let lastHistoryTimestamp = 0
+  let latestServiceCheckedAt = 0
+  const historyByService = new Map()
 
   const getApiBase = () => {
     const raw = document.querySelector('meta[name="apiBase"]')?.content?.trim() || ''
@@ -73,6 +81,38 @@ if (root) {
     return `${Math.floor(seconds / 3600)} 小时前`
   }
 
+  const normalizeHistorySamples = (samples) => Array.isArray(samples)
+    ? samples
+      .map(sample => {
+        const rawTs = Number(sample?.checked_at)
+        const sampleTs = rawTs < 1e10 ? rawTs * 1000 : rawTs
+        const sampleState = String(sample?.state || 'error').toLowerCase()
+        if (!Number.isFinite(sampleTs) || sampleTs <= 0) return null
+        return {
+          state: stateLabels[sampleState] ? sampleState : 'error',
+          checkedAt: sampleTs
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.checkedAt - b.checkedAt)
+    : []
+
+  const mergeHistorySamples = (service, incoming, replace = false) => {
+    const cutoff = Date.now() - FULL_HISTORY_MAX_AGE_MS
+    const merged = new Map()
+    if (!replace) {
+      for (const sample of historyByService.get(service) || []) {
+        if (sample.checkedAt >= cutoff) merged.set(sample.checkedAt, sample)
+      }
+    }
+    for (const sample of incoming) {
+      if (sample.checkedAt >= cutoff) merged.set(sample.checkedAt, sample)
+    }
+    const result = [...merged.values()].sort((a, b) => a.checkedAt - b.checkedAt)
+    historyByService.set(service, result)
+    return result
+  }
+
   const buildHistorySlots = (samples, latestCheckedAt, latestReportedState) => {
     const observed = Array.isArray(samples) ? [...samples] : []
     if (
@@ -106,7 +146,7 @@ if (root) {
     })
   }
 
-  const normalizeRow = (item) => {
+  const normalizeRow = (item, historyOverride = null) => {
     const checkedAt = Number(item?.checked_at)
     const checkedAtMs = checkedAt < 1e10 ? checkedAt * 1000 : checkedAt
     const stale = !Number.isFinite(checkedAtMs) || Date.now() - checkedAtMs > 45 * 60 * 1000
@@ -114,21 +154,7 @@ if (root) {
       ? String(item.state).toLowerCase()
       : 'error'
     const state = stale ? 'stale' : reportedState
-    const history = Array.isArray(item?.history)
-      ? item.history
-        .map(sample => {
-          const rawTs = Number(sample?.checked_at)
-          const sampleTs = rawTs < 1e10 ? rawTs * 1000 : rawTs
-          const sampleState = String(sample?.state || 'error').toLowerCase()
-          if (!Number.isFinite(sampleTs) || sampleTs <= 0) return null
-          return {
-            state: stateLabels[sampleState] ? sampleState : 'error',
-            checkedAt: sampleTs
-          }
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.checkedAt - b.checkedAt)
-      : []
+    const history = historyOverride || normalizeHistorySamples(item?.history)
     const historySlots = buildHistorySlots(
       history,
       Number.isFinite(checkedAtMs) ? checkedAtMs : 0,
@@ -146,6 +172,43 @@ if (root) {
       history,
       historySlots
     }
+  }
+
+  const clearRefreshTimer = () => {
+    if (!refreshTimer) return
+    window.clearTimeout(refreshTimer)
+    refreshTimer = 0
+  }
+
+  const scheduleStatusRefresh = (delayOverride = null) => {
+    clearRefreshTimer()
+    if (document.hidden || !getServerId()) return
+
+    let delay = Number(delayOverride)
+    if (!Number.isFinite(delay) || delay <= 0) {
+      if (latestServiceCheckedAt > 0) {
+        const nextExpected = latestServiceCheckedAt + HISTORY_SLOT_MS + STATUS_REFRESH_GRACE_MS
+        const untilNext = nextExpected - Date.now()
+        delay = untilNext > 0
+          ? Math.min(HISTORY_SLOT_MS, Math.max(60 * 1000, untilNext))
+          : STATUS_RETRY_MS
+      } else {
+        delay = HISTORY_SLOT_MS
+      }
+    }
+
+    refreshTimer = window.setTimeout(() => {
+      refreshTimer = 0
+      void fetchStatuses()
+    }, delay)
+  }
+
+  const resetHistoryState = () => {
+    hasFullHistory = false
+    lastFullHistoryLoadAt = 0
+    lastHistoryTimestamp = 0
+    latestServiceCheckedAt = 0
+    historyByService.clear()
   }
 
   const escapeHtml = (value) => String(value)
@@ -238,16 +301,25 @@ if (root) {
     root.hidden = !isPlacedInInstanceFlow
   }
 
-  const fetchStatuses = async () => {
+  const fetchStatuses = async ({ forceFull = false } = {}) => {
     const serverId = getServerId()
     if (!serverId) {
       activeServerId = ''
       render([])
+      clearRefreshTimer()
       return
     }
     activeServerId = serverId
+    const shouldFullLoad = forceFull || !hasFullHistory || Date.now() - lastFullHistoryLoadAt > FULL_HISTORY_MAX_AGE_MS
+    const params = new URLSearchParams({ id: serverId })
+    if (shouldFullLoad || !lastHistoryTimestamp) {
+      params.set('hours', '24')
+    } else {
+      params.set('since', String(lastHistoryTimestamp))
+    }
+
     try {
-      const response = await fetch(`${getApiBase()}/api/service-status?id=${encodeURIComponent(serverId)}`, {
+      const response = await fetch(`${getApiBase()}/api/service-status?${params.toString()}`, {
         credentials: 'include',
         headers: authHeaders(),
         cache: 'no-store'
@@ -260,9 +332,31 @@ if (root) {
         : Array.isArray(payload?.data?.services)
           ? payload.data.services
           : []
-      render(services.map(normalizeRow))
+
+      if (shouldFullLoad) historyByService.clear()
+      const rows = services.map(item => {
+        const service = String(item?.service || '')
+        const incomingHistory = normalizeHistorySamples(item?.history)
+        const mergedHistory = mergeHistorySamples(service, incomingHistory, shouldFullLoad)
+        return normalizeRow(item, mergedHistory)
+      })
+
+      hasFullHistory = true
+      if (shouldFullLoad) lastFullHistoryLoadAt = Date.now()
+      lastHistoryTimestamp = rows.reduce((latest, row) => Math.max(
+        latest,
+        row.checkedAt || 0,
+        ...(row.history || []).map(sample => sample.checkedAt || 0)
+      ), lastHistoryTimestamp)
+      latestServiceCheckedAt = rows.reduce(
+        (latest, row) => Math.max(latest, row.checkedAt || 0),
+        latestServiceCheckedAt
+      )
+      render(rows)
+      scheduleStatusRefresh()
     } catch {
-      if (serverId === activeServerId) render([])
+      if (serverId === activeServerId && !hasFullHistory) render([])
+      scheduleStatusRefresh(STATUS_RETRY_MS)
     }
   }
 
@@ -312,6 +406,8 @@ if (root) {
     if (!serverId) {
       activeServerId = ''
       lastRenderKey = ''
+      clearRefreshTimer()
+      resetHistoryState()
       render([])
       restoreRootToBody()
       return
@@ -320,8 +416,10 @@ if (root) {
     if (serverId === activeServerId) return
     activeServerId = serverId
     lastRenderKey = ''
+    clearRefreshTimer()
+    resetHistoryState()
     render([])
-    void fetchStatuses()
+    void fetchStatuses({ forceFull: true })
   }
 
   const patchHistory = (name) => {
@@ -340,16 +438,19 @@ if (root) {
   window.addEventListener('popstate', syncRoute)
   window.addEventListener('cfsm-routechange', syncRoute)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) void fetchStatuses()
+    if (document.hidden) {
+      clearRefreshTimer()
+      return
+    }
+    void fetchStatuses({
+      forceFull: !hasFullHistory || Date.now() - lastFullHistoryLoadAt > FULL_HISTORY_MAX_AGE_MS
+    })
   }, { passive: true })
 
   syncRoute()
-  refreshTimer = window.setInterval(() => {
-    if (!document.hidden && getServerId()) void fetchStatuses()
-  }, 60 * 1000)
 
   window.addEventListener('beforeunload', () => {
-    if (refreshTimer) window.clearInterval(refreshTimer)
+    clearRefreshTimer()
     if (placementTimer) window.clearTimeout(placementTimer)
   }, { once: true })
 }
