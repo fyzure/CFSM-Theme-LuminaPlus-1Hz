@@ -1,0 +1,38 @@
+name: Static Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check JavaScript syntax
+        run: |
+          node --check assets/cfsm-ws-visibility-v1.js
+          node --check assets/cfsm-one-hz-gate-v1.js
+      - name: Check static asset references
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const html = fs.readFileSync('index.html', 'utf8');
+          const refs = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map(([, ref]) => ref);
+          const missing = refs.filter((ref) => !fs.existsSync(ref));
+          if (missing.length) {
+            console.error('Missing static assets:', missing);
+            process.exit(1);
+          }
+          if (!refs.includes('assets/cfsm-ws-visibility-v1.js')) {
+            console.error('WebSocket visibility shim is not loaded by index.html');
+            process.exit(1);
+          }
+          NODE
