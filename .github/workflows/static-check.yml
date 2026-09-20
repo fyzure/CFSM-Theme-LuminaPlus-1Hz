@@ -3,7 +3,7 @@ name: Static Check
 on:
   push:
     branches:
-      - me/v127-3hz
+      - me/v128-3s
   pull_request:
 
 permissions:
@@ -19,19 +19,19 @@ jobs:
           node-version: 22
       - name: Check JavaScript syntax
         run: node --check assets/index-D3CXpQAE.js
-      - name: Check 3 Hz pacing constants
+      - name: Check 3-second pacing constants
         run: |
           node <<'NODE'
           const fs = require('fs');
           const bundle = fs.readFileSync('assets/index-D3CXpQAE.js', 'utf8');
-          const expected = 'Ta=333,Ea=3e3,Da=333,Oa=8';
+          const expected = 'Ta=3e3,Ea=3e3,Da=3e3,Oa=8';
           if (!bundle.includes(expected)) {
-            console.error('3 Hz pacing constants are missing');
+            console.error('3-second pacing constants are missing');
             process.exit(1);
           }
           const html = fs.readFileSync('index.html', 'utf8');
-          if (!html.includes('LuminaPlus v1.2.7+3hz-do-hibernate')) {
-            console.error('3 Hz theme version marker is missing');
+          if (!html.includes('LuminaPlus v1.2.8+3s-do-hibernate')) {
+            console.error('3-second theme version marker is missing');
             process.exit(1);
           }
           NODE
