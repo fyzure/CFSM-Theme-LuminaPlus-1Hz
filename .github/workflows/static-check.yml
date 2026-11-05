@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Check JavaScript syntax
         run: |
           node --check assets/cfsm-ws-visibility-v1.js
@@ -33,6 +33,14 @@ jobs:
           }
           if (!refs.includes('assets/cfsm-ws-visibility-v1.js')) {
             console.error('WebSocket visibility shim is not loaded by index.html');
+            process.exit(1);
+          }
+          if (!refs.includes('assets/cfsm-one-hz-gate-v1.js')) {
+            console.error('WebSocket 1 Hz gate is not loaded by index.html');
+            process.exit(1);
+          }
+          if (!html.includes('LuminaPlus v1.2.22+1hz')) {
+            console.error('Unexpected upstream theme version');
             process.exit(1);
           }
           NODE
