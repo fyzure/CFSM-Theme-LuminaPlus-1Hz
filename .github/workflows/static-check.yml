@@ -39,6 +39,10 @@ jobs:
             console.error('WebSocket 1 Hz gate is not loaded by index.html');
             process.exit(1);
           }
+          if (refs.indexOf('assets/cfsm-one-hz-gate-v1.js') > refs.indexOf('assets/cfsm-ws-visibility-v1.js')) {
+            console.error('The native WebSocket 1 Hz gate must load before the visibility wrapper');
+            process.exit(1);
+          }
           if (!html.includes('LuminaPlus v1.2.22+1hz')) {
             console.error('Unexpected upstream theme version');
             process.exit(1);
